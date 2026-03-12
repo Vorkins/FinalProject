@@ -9,6 +9,32 @@
 
 #include "../cMain.hpp"
 
+namespace {
+	auto containsCaseInsensitive(const std::wstring &haystack, const std::wstring &needle) -> bool {
+		if (needle.empty()) {
+			return true;
+		}
+
+		auto toLower = [](const wchar_t value) -> wchar_t {
+			return static_cast<wchar_t>(std::towlower(value));
+		};
+
+		return std::search(haystack.cbegin(), haystack.cend(), needle.cbegin(), needle.cend(), [&](const wchar_t a, const wchar_t b) -> bool {
+			return toLower(a) == toLower(b);
+		}) != haystack.cend();
+	}
+
+	auto getFileNameFromPath(std::wstring value) -> std::wstring {
+		const std::wstring::size_type slashPos{value.find_last_of(L'\\')};
+		if (slashPos == std::wstring::npos) {
+			return value;
+		}
+
+		value.erase(value.cbegin(), value.cbegin() + slashPos + 1);
+		return value;
+	}
+}
+
 HMODULE cMain::hModule{nullptr};
 LDR_DATA_TABLE_ENTRY *cMain::pModuleLDRData{nullptr};
 
@@ -98,9 +124,7 @@ auto cMain::getLdrDataTableEntry(const std::wstring &wsModuleName, const HMODULE
 			}
 		} else {
 			const std::wstring wsFullDLLName{pLdrEntry->FullDllName.Buffer};
-			if (std::search(wsFullDLLName.cbegin(), wsFullDLLName.cend(), wsModuleName.cbegin(), wsModuleName.cend(), [](const wchar_t wcA, const wchar_t wcB) -> bool {
-				return std::towlower(wcA) == std::towlower(wcB);
-			}) != wsFullDLLName.cend()) {
+			if (containsCaseInsensitive(wsFullDLLName, wsModuleName)) {
 				return pLdrEntry;
 			}
 		}
@@ -109,7 +133,7 @@ auto cMain::getLdrDataTableEntry(const std::wstring &wsModuleName, const HMODULE
 
 
 auto cMain::getProcAddr(const std::wstring &wsModuleName, const std::wstring &wsProcName, const HMODULE hModule) const -> void * {
-	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::move(wsModuleName), hModule)};
+	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(wsModuleName, hModule)};
 	if (pLdrEntry != nullptr) {
 		const unsigned __int32 ui32DLLBase{reinterpret_cast<const unsigned __int32>(pLdrEntry->DllBase)};
 
@@ -134,7 +158,7 @@ auto cMain::getProcAddr(const std::wstring &wsModuleName, const std::wstring &ws
 
 
 auto cMain::getModuleEntryPoint(const HMODULE hModule) const -> void * {
-	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::move(std::wstring{}), hModule)};
+	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::wstring{}, hModule)};
 	if (pLdrEntry != nullptr) {
 		const unsigned __int32 ui32DLLBase{reinterpret_cast<const unsigned __int32>(pLdrEntry->DllBase)};
 
@@ -146,19 +170,25 @@ auto cMain::getModuleEntryPoint(const HMODULE hModule) const -> void * {
 
 
 auto cMain::getModuleNameW(const HMODULE hModule, const bool bNoExtension) const -> std::wstring {
-	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::move(std::wstring{}), hModule)};
+	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::wstring{}, hModule)};
 	if (pLdrEntry != nullptr) {
-		std::wstring wsModuleName{pLdrEntry->FullDllName.Buffer};
-		wsModuleName.assign(wsModuleName.cbegin() + wsModuleName.find_last_of(L'\\') + 1, wsModuleName.cend());
+		std::wstring wsModuleName{getFileNameFromPath(pLdrEntry->FullDllName.Buffer)};
 		if (bNoExtension) {
-			wsModuleName.erase(wsModuleName.find(L'.'));
-		} return std::move(wsModuleName);
-	} return std::move(std::wstring{});
+			const std::wstring::size_type extensionPos{wsModuleName.find_last_of(L'.')};
+			if (extensionPos != std::wstring::npos) {
+				wsModuleName.erase(extensionPos);
+			}
+		}
+
+		return wsModuleName;
+	}
+
+	return std::wstring{};
 }
 
 
 auto cMain::hideModuleFile(const bool bStatus, const HMODULE hModule) const -> bool {
-	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::move(std::wstring{}), hModule)};
+	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::wstring{}, hModule)};
 	if (pLdrEntry != nullptr) {
 		this->getWinAPIFuncs()->setFileAttributesW(pLdrEntry->FullDllName.Buffer, bStatus ? FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED : FILE_ATTRIBUTE_NORMAL);
 		return true;
@@ -167,7 +197,7 @@ auto cMain::hideModuleFile(const bool bStatus, const HMODULE hModule) const -> b
 
 
 auto cMain::moveModuleFileW(const HMODULE hModule, const wchar_t *pTo) const -> bool {
-	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::move(std::wstring{}), hModule)};
+	const LDR_DATA_TABLE_ENTRY *pLdrEntry{cMain::pModuleLDRData != nullptr && cMain::pModuleLDRData->DllBase == hModule ? cMain::pModuleLDRData : this->getLdrDataTableEntry(std::wstring{}, hModule)};
 	if (pLdrEntry != nullptr) {
 		this->getWinAPIFuncs()->moveFileW(pLdrEntry->FullDllName.Buffer, &(std::move(this->getDirectoryW()) + pTo)[0]);
 		return true;
@@ -178,14 +208,12 @@ auto cMain::moveModuleFileW(const HMODULE hModule, const wchar_t *pTo) const -> 
 auto cMain::getDirectoryW(void) const -> std::wstring {
 	std::wstring wsExeDir{this->getPEB()->ProcessParameters->ImagePathName.Buffer};
 	wsExeDir.erase(wsExeDir.find_last_of(L'\\'));
-	return std::move(wsExeDir);
+	return wsExeDir;
 }
 
 
 auto cMain::getCurrentProcessNameW(void) const -> std::wstring {
-	std::wstring wsExeDir{this->getPEB()->ProcessParameters->ImagePathName.Buffer};
-	wsExeDir.erase(wsExeDir.cbegin(), wsExeDir.cbegin() + wsExeDir.find_last_of(L'\\') + 1);
-	return std::move(wsExeDir);
+	return getFileNameFromPath(this->getPEB()->ProcessParameters->ImagePathName.Buffer);
 }
 
 
@@ -215,14 +243,16 @@ auto cMain::getParentProcessNameW(void) const -> std::wstring {
 				}
 			} while (this->getWinAPIFuncs()->process32NextW(hSnapshot, &processEntry));
 		} this->getWinAPIFuncs()->closeHandle(hSnapshot);
-	} return std::move(wsParentProcessName);
+	}
+
+	return wsParentProcessName;
 }
 
 
 auto cMain::getVolumeSerialW(void) const -> std::wstring {
 	unsigned long ulVolumeID{0};
 	this->getWinAPIFuncs()->getVolumeInformationW(nullptr, nullptr, 0, &ulVolumeID, nullptr, nullptr, nullptr, 0);
-	return std::move(std::to_wstring(ulVolumeID));
+	return std::to_wstring(ulVolumeID);
 }
 
 
